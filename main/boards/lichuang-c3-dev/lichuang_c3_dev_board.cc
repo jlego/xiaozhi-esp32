@@ -6,6 +6,8 @@
 #include "config.h"
 #include "i2c_device.h"
 #include "iot/thing_manager.h"
+// #include "cw2015.h"
+#include "max17048g.h"
 
 #include <esp_log.h>
 #include <esp_lcd_panel_vendor.h>
@@ -15,14 +17,16 @@
 
 #define TAG "LichuangC3DevBoard"
 
-LV_FONT_DECLARE(font_puhui_16_4);
-LV_FONT_DECLARE(font_awesome_16_4);
+LV_FONT_DECLARE(font_puhui_20_4);
+LV_FONT_DECLARE(font_awesome_20_4);
 
 class LichuangC3DevBoard : public WifiBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Button boot_button_;
     LcdDisplay* display_;
+    // CW2015 *fuel_gauge_;
+    MAX17048G *fuel_gauge_;
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -91,11 +95,11 @@ private:
         esp_lcd_panel_invert_color(panel, true);
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
-        display_ = new SpiLcdDisplay(panel_io, panel, DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT,
+        display_ = new SpiLcdDisplay(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY,
                                     {
-                                        .text_font = &font_puhui_16_4,
-                                        .icon_font = &font_awesome_16_4,
+                                        .text_font = &font_puhui_20_4,
+                                        .icon_font = &font_awesome_20_4,
                                         .emoji_font = font_emoji_32_init(),
                                     });
     }
@@ -104,7 +108,14 @@ private:
     void InitializeIot() {
         auto& thing_manager = iot::ThingManager::GetInstance();
         thing_manager.AddThing(iot::CreateThing("Speaker"));
-        thing_manager.AddThing(iot::CreateThing("Backlight"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
+        thing_manager.AddThing(iot::CreateThing("Battery"));
+    }
+    void InitializeBattery()
+    {
+        ESP_LOGI(TAG, "Init Battery");
+        // fuel_gauge_ = new CW2015(codec_i2c_bus_, 0x62); // CW2015 的默认地址是 0x62
+        fuel_gauge_ = new MAX17048G(codec_i2c_bus_, MAX17048);
     }
 
 public:
@@ -114,6 +125,8 @@ public:
         InitializeSt7789Display();
         InitializeButtons();
         InitializeIot();
+        InitializeBattery();
+        GetBacklight()->SetBrightness(100);
     }
 
     virtual AudioCodec* GetAudioCodec() override {
@@ -134,6 +147,26 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+    
+    virtual Backlight* GetBacklight() override {
+        static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+        return &backlight;
+    }
+    
+    virtual bool GetBatteryLevel(int &level, bool &charging, bool &discharging) override
+    {
+        float voltage = fuel_gauge_->getVoltage();
+        float soc = fuel_gauge_->getSOC();
+        // float voltage = fuel_gauge_->voltage();
+        // float soc = fuel_gauge_->capacity();
+        level = static_cast<int>(soc * 100.0f);
+        level = std::min(100, std::max(0, level));  // 限制在 0~100%
+        vTaskDelay(pdMS_TO_TICKS(1000)); 
+        charging = fuel_gauge_->isCharging(voltage, soc);
+        // charging = fuel_gauge_->isCharging();
+        discharging = !charging;
+        return true;
     }
 };
 

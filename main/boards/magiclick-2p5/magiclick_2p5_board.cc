@@ -1,4 +1,4 @@
-#include "wifi_board.h"
+#include "dual_network_board.h"
 #include "display/lcd_display.h"
 #include "audio_codecs/es8311_audio_codec.h"
 #include "application.h"
@@ -6,6 +6,9 @@
 #include "led/circular_strip.h"
 #include "iot/thing_manager.h"
 #include "config.h"
+#include "assets/lang_config.h"
+#include "font_awesome_symbols.h"
+
 #include <esp_lcd_panel_vendor.h>
 #include <wifi_station.h>
 #include <esp_log.h>
@@ -14,7 +17,10 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_gc9a01.h>
-#include "font_awesome_symbols.h"
+
+#include "power_manager.h"
+#include "power_save_timer.h"
+#include "esp_wifi.h"
 
 #define TAG "magiclick_2p5"
 
@@ -24,37 +30,13 @@ LV_FONT_DECLARE(font_awesome_16_4);
 class GC9107Display : public SpiLcdDisplay {
 public:
     GC9107Display(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
-                gpio_num_t backlight_pin, bool backlight_output_invert,
                 int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y, bool swap_xy)
-        : SpiLcdDisplay(panel_io, panel, backlight_pin, backlight_output_invert, 
-                    width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy, 
+        : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy, 
                     {
                         .text_font = &font_puhui_16_4,
                         .icon_font = &font_awesome_16_4,
                         .emoji_font = font_emoji_32_init(),
                     }) {
-
-        DisplayLockGuard lock(this);
-        // 只需要覆盖颜色相关的样式
-        auto screen = lv_disp_get_scr_act(lv_disp_get_default());
-        lv_obj_set_style_text_color(screen, lv_color_black(), 0);
-
-        // 设置容器背景色
-        lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
-
-        // 设置状态栏背景色和文本颜色
-        lv_obj_set_style_bg_color(status_bar_, lv_color_white(), 0);
-        lv_obj_set_style_text_color(network_label_, lv_color_black(), 0);
-        lv_obj_set_style_text_color(notification_label_, lv_color_black(), 0);
-        lv_obj_set_style_text_color(status_label_, lv_color_black(), 0);
-        lv_obj_set_style_text_color(mute_label_, lv_color_black(), 0);
-        lv_obj_set_style_text_color(battery_label_, lv_color_black(), 0);
-
-        // 设置内容区背景色和文本颜色
-        lv_obj_set_style_bg_color(content_, lv_color_black(), 0);
-        lv_obj_set_style_border_width(content_, 0, 0);
-        lv_obj_set_style_text_color(emotion_label_, lv_color_white(), 0);
-        lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
     }
 };
 
@@ -92,13 +74,61 @@ static const gc9a01_lcd_init_cmd_t gc9107_lcd_init_cmds[] = {
     {0xba, (uint8_t[]){0xFF, 0xFF}, 2, 0},
 };
 
-class magiclick_2p5 : public WifiBoard {
+class magiclick_2p5 : public DualNetworkBoard {
 private:
     i2c_master_bus_handle_t codec_i2c_bus_;
     Button main_button_;
     Button left_button_;
     Button right_button_;
     GC9107Display* display_;
+
+    PowerSaveTimer* power_save_timer_;
+    PowerManager* power_manager_;
+
+    esp_lcd_panel_io_handle_t panel_io = nullptr;
+    esp_lcd_panel_handle_t panel = nullptr;
+
+
+    void InitializePowerManager() {
+        power_manager_ = new PowerManager(GPIO_NUM_48);
+        power_manager_->OnChargingStatusChanged([this](bool is_charging) {
+            if (is_charging) {
+                power_save_timer_->SetEnabled(false);
+            } else {
+                power_save_timer_->SetEnabled(true);
+            }
+        });
+    }
+
+    void InitializePowerSaveTimer() {
+        power_save_timer_ = new PowerSaveTimer(240, 60, -1);
+        power_save_timer_->OnEnterSleepMode([this]() {
+            ESP_LOGI(TAG, "Enabling sleep mode");
+            display_->SetChatMessage("system", "");
+            display_->SetEmotion("sleepy");
+            GetBacklight()->SetBrightness(1);
+        });
+        power_save_timer_->OnExitSleepMode([this]() {
+            display_->SetChatMessage("system", "");
+            display_->SetEmotion("neutral");
+            GetBacklight()->RestoreBrightness();
+        });
+         
+        power_save_timer_->SetEnabled(true);
+    }
+
+    void Enable4GModule() {
+        // enable the 4G module
+        gpio_reset_pin(ML307_POWER_PIN);
+        gpio_set_direction(ML307_POWER_PIN, GPIO_MODE_OUTPUT);
+        gpio_set_level(ML307_POWER_PIN, ML307_POWER_OUTPUT_INVERT ? 0 : 1);
+    }
+    void Disable4GModule() {
+        // enable the 4G module
+        gpio_reset_pin(ML307_POWER_PIN);
+        gpio_set_direction(ML307_POWER_PIN, GPIO_MODE_OUTPUT);
+        gpio_set_level(ML307_POWER_PIN, ML307_POWER_OUTPUT_INVERT ? 1 : 0);
+    }
 
     void InitializeCodecI2c() {
         // Initialize I2C peripheral
@@ -117,8 +147,41 @@ private:
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
     }
 
+    void CheckNetType() {
+        if (GetNetworkType() == NetworkType::WIFI) {
+            Disable4GModule();
+        } else if (GetNetworkType() == NetworkType::ML307) {
+            Enable4GModule();
+        }
+        
+    }
+
+
     void InitializeButtons() {
+        main_button_.OnClick([this]() {
+            auto& app = Application::GetInstance();
+            if (GetNetworkType() == NetworkType::WIFI) {
+                if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
+                    // cast to WifiBoard
+                    auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
+                    wifi_board.ResetWifiConfiguration();
+                    Disable4GModule();
+                }
+            } else if(GetNetworkType() == NetworkType::ML307) {
+                
+                Enable4GModule();
+                // stop WiFi
+                esp_wifi_stop();
+            }
+        });        
+        main_button_.OnDoubleClick([this]() {
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() == kDeviceStateStarting || app.GetDeviceState() == kDeviceStateWifiConfiguring) {
+                SwitchNetworkType();
+            }
+        });
         main_button_.OnPressDown([this]() {
+            power_save_timer_->WakeUp();
             Application::GetInstance().StartListening();
         });
         main_button_.OnPressUp([this]() {
@@ -126,40 +189,38 @@ private:
         });
 
         left_button_.OnClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
-                ResetWifiConfiguration();
-            }
+            power_save_timer_->WakeUp();            
             auto codec = GetAudioCodec();
             auto volume = codec->output_volume() - 10;
             if (volume < 0) {
                 volume = 0;
             }
             codec->SetOutputVolume(volume);
-            GetDisplay()->ShowNotification("音量 " + std::to_string(volume));
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
 
         left_button_.OnLongPress([this]() {
+            power_save_timer_->WakeUp();
             GetAudioCodec()->SetOutputVolume(0);
-            GetDisplay()->ShowNotification("已静音");
+            GetDisplay()->ShowNotification(Lang::Strings::MUTED);
         });
 
         right_button_.OnClick([this]() {
+            power_save_timer_->WakeUp();
             auto codec = GetAudioCodec();
             auto volume = codec->output_volume() + 10;
             if (volume > 100) {
                 volume = 100;
             }
             codec->SetOutputVolume(volume);
-            GetDisplay()->ShowNotification("音量 " + std::to_string(volume));
+            GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
 
         right_button_.OnLongPress([this]() {
+            power_save_timer_->WakeUp();
             GetAudioCodec()->SetOutputVolume(100);
-            GetDisplay()->ShowNotification("最大音量");
+            GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
         });
-
-
     }
 
     void InitializeLedPower() {
@@ -181,8 +242,8 @@ private:
     }
 
     void InitializeGc9107Display(){
-        esp_lcd_panel_io_handle_t panel_io = nullptr;
-        esp_lcd_panel_handle_t panel = nullptr;
+        // esp_lcd_panel_io_handle_t panel_io = nullptr;
+        // esp_lcd_panel_handle_t panel = nullptr;
         // 液晶屏控制IO初始化
         ESP_LOGD(TAG, "Install panel IO");
         esp_lcd_panel_io_spi_config_t io_config = {};
@@ -195,7 +256,7 @@ private:
         io_config.lcd_param_bits = 8;
         ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI3_HOST, &io_config, &panel_io));
 
-        // 初始化液晶屏驱动芯片NV3023
+        // 初始化液晶屏驱动芯片GC9107
         ESP_LOGD(TAG, "Install LCD driver");        
         gc9a01_vendor_config_t gc9107_vendor_config = {
             .init_cmds = gc9107_lcd_init_cmds,
@@ -216,7 +277,7 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
         ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel, true));
-        display_ = new GC9107Display(panel_io, panel, DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT,
+        display_ = new GC9107Display(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
@@ -224,20 +285,24 @@ private:
     void InitializeIot() {
         auto& thing_manager = iot::ThingManager::GetInstance();
         thing_manager.AddThing(iot::CreateThing("Speaker"));
-        thing_manager.AddThing(iot::CreateThing("Backlight"));
+        thing_manager.AddThing(iot::CreateThing("Screen"));
     }
 
 public:
-    magiclick_2p5() :
+    magiclick_2p5() : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN, 4096, 0),
         main_button_(MAIN_BUTTON_GPIO),
         left_button_(LEFT_BUTTON_GPIO), 
         right_button_(RIGHT_BUTTON_GPIO) {
+        InitializeLedPower();
+        CheckNetType();
+        InitializePowerManager();
+        InitializePowerSaveTimer();
         InitializeCodecI2c();
         InitializeButtons();
-        InitializeLedPower();
         InitializeSpi();
         InitializeGc9107Display();
         InitializeIot();
+        GetBacklight()->RestoreBrightness();
     }
 
     virtual Led* GetLed() override {
@@ -254,6 +319,30 @@ public:
 
     virtual Display* GetDisplay() override {
         return display_;
+    }
+    
+    virtual Backlight* GetBacklight() override {
+        static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+        return &backlight;
+    }
+
+    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+        static bool last_discharging = false;
+        charging = power_manager_->IsCharging();
+        discharging = power_manager_->IsDischarging();
+        if (discharging != last_discharging) {
+            power_save_timer_->SetEnabled(discharging);
+            last_discharging = discharging;
+        }
+        level = power_manager_->GetBatteryLevel();
+        return true;
+    }
+
+    virtual void SetPowerSaveMode(bool enabled) override {
+        if (!enabled) {
+            power_save_timer_->WakeUp();
+        }
+        DualNetworkBoard::SetPowerSaveMode(enabled);
     }
 };
 

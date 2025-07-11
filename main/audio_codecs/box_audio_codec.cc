@@ -1,10 +1,10 @@
 #include "box_audio_codec.h"
 
 #include <esp_log.h>
-#include <driver/i2c.h>
+#include <driver/i2c_master.h>
 #include <driver/i2s_tdm.h>
 
-static const char TAG[] = "BoxAudioCodec";
+#define TAG "BoxAudioCodec"
 
 BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
@@ -57,21 +57,29 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
     output_dev_ = esp_codec_dev_new(&dev_cfg);
     assert(output_dev_ != NULL);
 
-    // Input
-    i2c_cfg.addr = es7210_addr;
-    in_ctrl_if_ = audio_codec_new_i2c_ctrl(&i2c_cfg);
-    assert(in_ctrl_if_ != NULL);
+    // Input - 只有当ES7210地址不为0时才初始化ES7210
+    if (es7210_addr != 0) {
+        i2c_cfg.addr = es7210_addr;
+        in_ctrl_if_ = audio_codec_new_i2c_ctrl(&i2c_cfg);
+        assert(in_ctrl_if_ != NULL);
 
-    es7210_codec_cfg_t es7210_cfg = {};
-    es7210_cfg.ctrl_if = in_ctrl_if_;
-    es7210_cfg.mic_selected = ES7120_SEL_MIC1 | ES7120_SEL_MIC2 | ES7120_SEL_MIC3 | ES7120_SEL_MIC4;
-    in_codec_if_ = es7210_codec_new(&es7210_cfg);
-    assert(in_codec_if_ != NULL);
+        es7210_codec_cfg_t es7210_cfg = {};
+        es7210_cfg.ctrl_if = in_ctrl_if_;
+        es7210_cfg.mic_selected = ES7120_SEL_MIC1 | ES7120_SEL_MIC2 | ES7120_SEL_MIC3 | ES7120_SEL_MIC4;
+        in_codec_if_ = es7210_codec_new(&es7210_cfg);
+        assert(in_codec_if_ != NULL);
 
-    dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
-    dev_cfg.codec_if = in_codec_if_;
-    input_dev_ = esp_codec_dev_new(&dev_cfg);
-    assert(input_dev_ != NULL);
+        dev_cfg.dev_type = ESP_CODEC_DEV_TYPE_IN;
+        dev_cfg.codec_if = in_codec_if_;
+        input_dev_ = esp_codec_dev_new(&dev_cfg);
+        assert(input_dev_ != NULL);
+    } else {
+        // 如果ES7210地址为0，则不初始化输入设备
+        in_ctrl_if_ = NULL;
+        in_codec_if_ = NULL;
+        input_dev_ = NULL;
+        ESP_LOGW(TAG, "ES7210 not initialized (address is 0)");
+    }
 
     ESP_LOGI(TAG, "BoxAudioDevice initialized");
 }
@@ -79,11 +87,21 @@ BoxAudioCodec::BoxAudioCodec(void* i2c_master_handle, int input_sample_rate, int
 BoxAudioCodec::~BoxAudioCodec() {
     ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
     esp_codec_dev_delete(output_dev_);
-    ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
-    esp_codec_dev_delete(input_dev_);
+    
+    // 只有当input_dev_不为NULL时才关闭和删除
+    if (input_dev_ != NULL) {
+        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        esp_codec_dev_delete(input_dev_);
+    }
 
-    audio_codec_delete_codec_if(in_codec_if_);
-    audio_codec_delete_ctrl_if(in_ctrl_if_);
+    // 只有当in_codec_if_不为NULL时才删除
+    if (in_codec_if_ != NULL) {
+        audio_codec_delete_codec_if(in_codec_if_);
+    }
+    if (in_ctrl_if_ != NULL) {
+        audio_codec_delete_ctrl_if(in_ctrl_if_);
+    }
+    
     audio_codec_delete_codec_if(out_codec_if_);
     audio_codec_delete_ctrl_if(out_ctrl_if_);
     audio_codec_delete_gpio_if(gpio_if_);
@@ -96,8 +114,8 @@ void BoxAudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_
     i2s_chan_config_t chan_cfg = {
         .id = I2S_NUM_0,
         .role = I2S_ROLE_MASTER,
-        .dma_desc_num = 6,
-        .dma_frame_num = 240,
+        .dma_desc_num = AUDIO_CODEC_DMA_DESC_NUM,
+        .dma_frame_num = AUDIO_CODEC_DMA_FRAME_NUM,
         .auto_clear_after_cb = true,
         .auto_clear_before_cb = false,
         .intr_priority = 0,
@@ -188,6 +206,11 @@ void BoxAudioCodec::EnableInput(bool enable) {
         return;
     }
     if (enable) {
+        // 如果input_dev_为NULL，说明没有ES7210，无法启用输入
+        if (input_dev_ == NULL) {
+            ESP_LOGW(TAG, "Cannot enable input: ES7210 not available");
+            return;
+        }
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
             .channel = 4,
@@ -199,9 +222,11 @@ void BoxAudioCodec::EnableInput(bool enable) {
             fs.channel_mask |= ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1);
         }
         ESP_ERROR_CHECK(esp_codec_dev_open(input_dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), 40.0));
+        ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0), AUDIO_CODEC_DEFAULT_MIC_GAIN));
     } else {
-        ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        if (input_dev_ != NULL) {
+            ESP_ERROR_CHECK(esp_codec_dev_close(input_dev_));
+        }
     }
     AudioCodec::EnableInput(enable);
 }
@@ -228,7 +253,7 @@ void BoxAudioCodec::EnableOutput(bool enable) {
 }
 
 int BoxAudioCodec::Read(int16_t* dest, int samples) {
-    if (input_enabled_) {
+    if (input_enabled_ && input_dev_ != NULL) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
     }
     return samples;
