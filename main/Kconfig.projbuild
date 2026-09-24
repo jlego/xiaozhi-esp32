@@ -629,6 +629,18 @@ choice BOARD_TYPE
     config BOARD_TYPE_ZHENGCHEN_CAM
         bool "Zhengchen AI Camera Wi-Fi (征辰科技)"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ESP_WATCH_S3A3
+        bool "ESP-WATCH-S3A3开发板"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ESP_WATCH_S3B3
+        bool "ESP-WATCH-S3B3开发板"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ESP_WATCH_AMOLED_4G
+        bool "ESP-WATCH-AMOLED-4G开发板"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ESP_EYE
+        bool "ESP-EYE开发板"
+        depends on IDF_TARGET_ESP32S3
 endchoice
 
 choice XIAOZHI_NETWORK_TYPE

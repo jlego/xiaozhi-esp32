@@ -53,8 +53,21 @@ public:
     virtual NetworkInterface* GetNetwork() override;
     virtual const char* GetNetworkStateIcon() override;
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override;
+    virtual void SetPowerSaveMode(bool enabled) override;
     virtual std::string GetBoardJson() override;
     virtual std::string GetDeviceStatusJson() override;
+
+    // 闹钟相关虚函数
+    virtual int64_t GetNextAlarmWakeupTimeUs() const {
+        return -1;
+    }
+    
+    virtual Alarm* GetNearestAlarm() {
+        return nullptr;
+    }
+    
+    virtual void TriggerAlarmCheck() {
+    }
 };
 
-#endif // DUAL_NETWORK_BOARD_H 
+#endif // DUAL_NETWORK_BOARD_H

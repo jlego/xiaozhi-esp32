@@ -2,6 +2,8 @@
 #define WIFI_BOARD_H
 
 #include "board.h"
+#include "alarm.h"
+#include <string>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <esp_timer.h>
@@ -11,6 +13,9 @@ protected:
     esp_timer_handle_t connect_timer_ = nullptr;
     bool in_config_mode_ = false;
     NetworkEventCallback network_event_callback_ = nullptr;
+    bool wifi_config_mode_ = false;
+    bool mqtt_connected_ = false;
+    bool websocket_connected_ = false;
 
     virtual std::string GetBoardJson() override;
 
@@ -36,6 +41,8 @@ protected:
      */
     static void OnWifiConnectTimeout(void* arg);
 
+    void EnterWifiConfigMode();
+
 public:
     WifiBoard();
     virtual ~WifiBoard();
@@ -52,13 +59,33 @@ public:
     virtual void SetNetworkEventCallback(NetworkEventCallback callback) override;
     virtual const char* GetNetworkStateIcon() override;
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override;
+    virtual void SetPowerSaveMode(bool enabled) override;
+    virtual void ResetWifiConfiguration();
     virtual AudioCodec* GetAudioCodec() override { return nullptr; }
     virtual std::string GetDeviceStatusJson() override;
+    virtual PCF8563* GetRtc() override { return nullptr; }
+    
+    // NTP时间同步相关函数
+    void SyncTimeWithNtp();
+    void WriteTimeToRtc();
+    void SyncPCF8563ToRtc();
+    
+    // 闹钟相关虚函数
+    virtual int64_t GetNextAlarmWakeupTimeUs() const {
+        return -1;
+    }
+    
+    virtual Alarm* GetNearestAlarm() {
+        return nullptr;
+    }
+    
+    virtual void TriggerAlarmCheck() {
+    }
     
     /**
      * Enter WiFi configuration mode (thread-safe, can be called from any task)
      */
-    void EnterWifiConfigMode();
+    void EnterWifiConfigModePublic();
     
     /**
      * Check if in WiFi config mode

@@ -31,11 +31,24 @@ protected:
     lv_obj_t* chat_message_label_ = nullptr;
     esp_timer_handle_t preview_timer_ = nullptr;
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
-    bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
+    bool hide_subtitle_ = false;
+
+    lv_obj_t* alarm_popup_ = nullptr;
+    lv_obj_t* alarm_label_ = nullptr;
+
+    lv_obj_t* digit_containers_[5][7][3];
+    lv_obj_t* date_label_ = nullptr;
 
     void InitializeLcdThemes();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
+    virtual void UpdateEmojiBoxTime() override;
+
+    void CreateAlarmPopup();
+    void create_digit_containers(lv_obj_t* parent);
+    void draw_digit(int d_index, int num, lv_color_t top_color, lv_color_t bottom_color);
+    void update_time(int hours, int minutes);
+    void cleanup_digital_clock();
 
 protected:
     // Add protected constructor
@@ -53,7 +66,11 @@ public:
     virtual void SetTheme(Theme* theme) override;
 
     // Set whether to hide chat messages/subtitles
+    // void SetHideSubtitle(bool hide);
     virtual void SetHideSubtitle(bool hide) override;
+
+    virtual void ShowAlarmNotification(const char* message) override;
+    virtual void HideAlarmNotification() override;
 };
 
 // SPI LCD display

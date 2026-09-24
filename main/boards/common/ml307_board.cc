@@ -186,6 +186,13 @@ void Ml307Board::SetPowerSaveLevel(PowerSaveLevel level) {
     (void)level;
 }
 
+void Ml307Board::SetPowerSaveMode(bool enabled) {
+    // ML307 cellular modem doesn't support power save mode like WiFi
+    // Just log the state change for debugging
+    ESP_LOGI(TAG, "SetPowerSaveMode: %s (cellular modem, no action)", enabled ? "ON" : "OFF");
+    (void)enabled;
+}
+
 std::string Ml307Board::GetDeviceStatusJson() {
     /*
      * 返回设备状态JSON

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <functional>
 
 #include <esp_timer.h>
@@ -15,6 +16,8 @@ public:
     void OnExitLightSleepMode(std::function<void()> callback);
     void OnEnterDeepSleepMode(std::function<void()> callback);
     void WakeUp();
+    
+    bool IsInLightSleepMode() const { return in_light_sleep_mode_; }
 
 private:
     void CheckTimer();

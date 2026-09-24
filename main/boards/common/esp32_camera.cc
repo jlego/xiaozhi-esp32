@@ -387,3 +387,42 @@ std::expected<std::string, std::string> Esp32Camera::Explain(const std::string& 
              question.c_str(), result.c_str());
     return result;
 }
+
+const uint8_t* Esp32Camera::GetFrameData() const {
+    if (current_fb_ == nullptr) return nullptr;
+    if (current_fb_->format == PIXFORMAT_RGB565 && encode_buf_ != nullptr) {
+        return encode_buf_;
+    }
+    return current_fb_->buf;
+}
+
+size_t Esp32Camera::GetFrameLength() const {
+    if (current_fb_ == nullptr) return 0;
+    if (current_fb_->format == PIXFORMAT_RGB565 && encode_buf_ != nullptr) {
+        return encode_buf_size_;
+    }
+    return current_fb_->len;
+}
+
+uint16_t Esp32Camera::GetFrameWidth() const {
+    if (current_fb_ == nullptr) return 0;
+    return current_fb_->width;
+}
+
+uint16_t Esp32Camera::GetFrameHeight() const {
+    if (current_fb_ == nullptr) return 0;
+    return current_fb_->height;
+}
+
+uint32_t Esp32Camera::GetFrameFormat() const {
+    if (current_fb_ == nullptr) return 0;
+    switch (current_fb_->format) {
+        case PIXFORMAT_RGB565:  return V4L2_PIX_FMT_RGB565;
+        case PIXFORMAT_YUV422:  return V4L2_PIX_FMT_YUYV;
+        case PIXFORMAT_YUV420:  return V4L2_PIX_FMT_YUV420;
+        case PIXFORMAT_GRAYSCALE: return V4L2_PIX_FMT_GREY;
+        case PIXFORMAT_JPEG:    return V4L2_PIX_FMT_JPEG;
+        case PIXFORMAT_RGB888:  return V4L2_PIX_FMT_RGB24;
+        default:                return 0;
+    }
+}

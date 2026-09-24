@@ -89,6 +89,10 @@ void DualNetworkBoard::SetPowerSaveLevel(PowerSaveLevel level) {
     current_board_->SetPowerSaveLevel(level);
 }
 
+void DualNetworkBoard::SetPowerSaveMode(bool enabled) {
+    current_board_->SetPowerSaveMode(enabled);
+}
+
 std::string DualNetworkBoard::GetBoardJson() {   
     return current_board_->GetBoardJson();
 }

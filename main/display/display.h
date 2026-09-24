@@ -85,6 +85,10 @@ public:
         return false;
     }
 
+    virtual void UpdateEmojiBoxTime() {}
+    virtual void ShowAlarmNotification(const char* message) {}
+    virtual void HideAlarmNotification() {}
+
     inline int width() const { return width_; }
     inline int height() const { return height_; }
     inline bool IsSetupUICalled() const { return setup_ui_called_; }

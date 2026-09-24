@@ -16,7 +16,7 @@
 #include "sleep_manager_compat.h"
 
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
-LV_FONT_DECLARE(font_puhui_basic_30_4);
+LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 
 #define TAG "CustomLcdDisplay"
 static constexpr uint32_t kDisplayKickMs = 1000;
@@ -1085,7 +1085,7 @@ void CustomLcdDisplay::DrawTexts(const std::vector<TextItem>& texts, bool clear)
 
     for (const auto& item : texts) {
         const lv_font_t* font = (item.size >= 20)
-            ? &font_puhui_basic_30_4
+            ? &font_noto_sans_basic_30_4
             : &BUILTIN_TEXT_FONT;
         render_text_to_buffer(item.content.c_str(), item.x, item.y, font);
     }

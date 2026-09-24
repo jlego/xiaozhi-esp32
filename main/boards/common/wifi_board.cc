@@ -21,7 +21,16 @@
 #include "blufi.h"
 #endif
 
+// NTP和时间同步相关头文件
+#include <esp_netif_sntp.h>
+#include <esp_sntp.h>
+#include <time.h>
+#include <sys/time.h>
+#include "pcf8563.h"
+
 static const char *TAG = "WifiBoard";
+static time_t last_sync_time = 0;
+WifiBoard* g_wifiBoard = nullptr;
 
 // Connection timeout in seconds
 static constexpr int CONNECT_TIMEOUT_SEC = 60;
@@ -36,6 +45,7 @@ WifiBoard::WifiBoard() {
         .skip_unhandled_events = true
     };
     esp_timer_create(&timer_args, &connect_timer_);
+    g_wifiBoard = this;
 }
 
 WifiBoard::~WifiBoard() {
@@ -125,6 +135,8 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
+            // WiFi连接成功后进行NTP时间同步
+            SyncTimeWithNtp();
             break;
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
@@ -296,6 +308,22 @@ void WifiBoard::SetPowerSaveLevel(PowerSaveLevel level) {
     WifiManager::GetInstance().SetPowerSaveLevel(wifi_level);
 }
 
+void WifiBoard::SetPowerSaveMode(bool enabled) {
+    if (enabled) {
+        WifiManager::GetInstance().SetPowerSaveLevel(WifiPowerSaveLevel::LOW_POWER);
+    } else {
+        WifiManager::GetInstance().SetPowerSaveLevel(WifiPowerSaveLevel::PERFORMANCE);
+    }
+}
+
+void WifiBoard::ResetWifiConfiguration() {
+    Settings settings("wifi", true);
+    settings.SetInt("force_ap", 1);
+    GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+}
+
 std::string WifiBoard::GetDeviceStatusJson() {
     auto& board = Board::GetInstance();
     auto root = cJSON_CreateObject();
@@ -352,4 +380,119 @@ std::string WifiBoard::GetDeviceStatusJson() {
     cJSON_free(str);
     cJSON_Delete(root);
     return result;
+}
+
+// SNTP同步回调
+static void sntp_sync_callback(struct timeval *tv) {
+    ESP_LOGI("WifiBoard", "SNTP同步完成");
+    
+    struct tm timeinfo;
+    localtime_r(&tv->tv_sec, &timeinfo);
+    ESP_LOGI("WifiBoard", "同步后时间: %04d-%02d-%02d %02d:%02d:%02d",
+             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+    if (g_wifiBoard) {
+        g_wifiBoard->WriteTimeToRtc();
+    }
+    last_sync_time = tv->tv_sec;
+}
+
+void WifiBoard::SyncPCF8563ToRtc(void) {
+    PCF8563* rtc = GetRtc();
+    if (rtc == nullptr) {
+        return;
+    }
+    struct tm rtc_time;
+    bool rtc_success = false;
+    esp_err_t err = rtc->getTime(rtc_time, rtc_success);
+    if (err == ESP_OK && rtc_success) {
+        struct tm tm_time = {
+            .tm_sec  = rtc_time.tm_sec,
+            .tm_min  = rtc_time.tm_min,
+            .tm_hour = rtc_time.tm_hour,
+            .tm_mday = rtc_time.tm_mday,
+            .tm_mon  = rtc_time.tm_mon,
+            .tm_year = rtc_time.tm_year,
+            .tm_wday = 0,
+            .tm_yday = 0,
+            .tm_isdst = -1
+        };
+        ESP_LOGI(TAG, "PCF8563写入RTC的时间: %04d-%02d-%02d %02d:%02d:%02d", 
+                 tm_time.tm_year + 1900, tm_time.tm_mon + 1, tm_time.tm_mday,
+                 tm_time.tm_hour, tm_time.tm_min, tm_time.tm_sec);
+        time_t t = mktime(&tm_time);
+        struct timeval now = {
+            .tv_sec = t,
+            .tv_usec = 0
+        };
+        settimeofday(&now, NULL);
+    }
+}
+
+void WifiBoard::SyncTimeWithNtp() {
+    setenv("TZ", "CST-8", 1);
+    tzset();
+    time_t now;
+    time(&now);
+    if (esp_sntp_enabled()) {
+        ESP_LOGW(TAG, "SNTP 已运行，自动10分钟同步一次");
+        return;
+    }
+    esp_sntp_setservername(0, "ntp1.aliyun.com");
+    esp_sntp_setservername(1, "ntp2.aliyun.com");
+    esp_sntp_set_sync_interval(10 * 60 * 1000);
+    esp_sntp_set_sync_mode(SNTP_SYNC_MODE_SMOOTH);
+    esp_sntp_set_time_sync_notification_cb(sntp_sync_callback);
+    esp_sntp_init();
+    ESP_LOGW(TAG, "SNTP 已启动：10分钟自动同步一次");
+}
+
+void WifiBoard::WriteTimeToRtc() {
+    PCF8563* rtc = GetRtc();
+    if (!rtc) {
+        ESP_LOGW(TAG, "RTC实例为空，无法写入时间");
+        return;
+    }
+
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+
+    if (timeinfo.tm_year < (2023 - 1900)) {
+        ESP_LOGW(TAG, "系统时间无效，年份: %d", timeinfo.tm_year + 1900);
+        return;
+    }
+
+    ESP_LOGI(TAG, "准备写入RTC的时间: %04d-%02d-%02d %02d:%02d:%02d", 
+             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+
+    bool clock_running_before = rtc->isClockRunning();
+    ESP_LOGI(TAG, "写入前时钟状态: %s", clock_running_before ? "运行中" : "已停止");
+
+    esp_err_t err = rtc->setTime(timeinfo);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "时间已成功写入RTC");
+        
+        bool clock_running_after_write = rtc->isClockRunning();
+        ESP_LOGI(TAG, "写入后时钟状态: %s", clock_running_after_write ? "运行中" : "已停止");
+        
+        err = rtc->startClock();
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "RTC时钟已启动");
+            
+            bool clock_running_final = rtc->isClockRunning();
+            ESP_LOGI(TAG, "启动后时钟状态: %s", clock_running_final ? "运行中" : "已停止");
+            
+            if (!clock_running_final) {
+                ESP_LOGW(TAG, "警告：RTC时钟未能成功启动");
+            }
+        } else {
+            ESP_LOGE(TAG, "启动RTC时钟失败: %s", esp_err_to_name(err));
+        }
+    } else {
+        ESP_LOGE(TAG, "写入RTC失败: %s", esp_err_to_name(err));
+    }
 }

@@ -20,6 +20,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/oled_display.cc"
             "display/lvgl_display/lvgl_display.cc"
             "display/emote_display.cc"
+            "display/lcd.cc"
             "display/lvgl_display/emoji_collection.cc"
             "display/lvgl_display/lvgl_theme.cc"
             "display/lvgl_display/lvgl_font.cc"
@@ -53,11 +54,14 @@ list(APPEND SOURCES
     "boards/common/nt26_board.cc"
     "boards/common/dual_network_board.cc"
     "boards/common/adc_battery_monitor.cc"
+    "boards/common/alarm.cc"
     "boards/common/axp2101.cc"
     "boards/common/backlight.cc"
     "boards/common/button.cc"
+    "boards/common/cw2015.cc"
     "boards/common/i2c_device.cc"
     "boards/common/knob.cc"
+    "boards/common/pcf8563.cc"
     "boards/common/power_save_timer.cc"
     "boards/common/press_to_talk_mcp_tool.cc"
     "boards/common/sleep_timer.cc"
@@ -865,6 +869,26 @@ elseif(CONFIG_BOARD_TYPE_LCDWIKI_ES3C35P)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
+elseif(CONFIG_BOARD_TYPE_ESP_WATCH_S3B3)
+    set(BOARD_DIR "codesfish/esp-watch-s3b3")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_ESP_WATCH_S3A3)
+    set(BOARD_DIR "codesfish/esp-watch-s3a3")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_ESP_WATCH_AMOLED_4G)
+    set(BOARD_DIR "codesfish/esp-watch-amoled-4g")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_30_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_ESP_EYE)
+    set(BOARD_DIR "codesfish/esp-eye")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 endif()
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)

@@ -13,6 +13,10 @@
 #include "backlight.h"
 #include "camera.h"
 #include "assets.h"
+#include "sleep_timer.h"
+
+class PCF8563;
+class Alarm;
 
 /**
  * Network events for unified callback
@@ -80,8 +84,14 @@ public:
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging);
     virtual std::string GetSystemInfoJson();
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
+    virtual void SetPowerSaveMode(bool enabled) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
+    virtual PCF8563* GetRtc() { return nullptr; }
+    virtual SleepTimer* GetPowerSaveTimer() { return nullptr; }
+    virtual int64_t GetNextAlarmWakeupTimeUs() const { return -1; }
+    virtual Alarm* GetNearestAlarm() { return nullptr; }
+    virtual void TriggerAlarmCheck() {}
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

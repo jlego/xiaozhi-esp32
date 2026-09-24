@@ -38,5 +38,12 @@ public:
     virtual bool SetHMirror(bool enabled) override;
     virtual bool SetVFlip(bool enabled) override;
     virtual bool SetSwapBytes(bool enabled) override;
+    // virtual std::string Explain(const std::string &question) override;
     virtual std::expected<std::string, std::string> Explain(const std::string& question) override;
+
+    const uint8_t* GetFrameData() const;
+    size_t GetFrameLength() const;
+    uint16_t GetFrameWidth() const;
+    uint16_t GetFrameHeight() const;
+    uint32_t GetFrameFormat() const;
 };
